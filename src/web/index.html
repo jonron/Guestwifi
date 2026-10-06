@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guest wifi</title>
+<noscript><meta http-equiv="refresh" content="300"></noscript>
+<style>
+  @font-face { font-family: "Plex Mono"; font-weight: 400; src: url(/fonts/plexmono-400.woff2) format("woff2"); }
+  @font-face { font-family: "Plex Mono"; font-weight: 600; src: url(/fonts/plexmono-600.woff2) format("woff2"); }
+  :root {
+    --ink: #0b0b0b;
+    --muted: #55535c;
+    --accent: #b23fe0;   /* lila från bubblorna i bakgrunden */
+    --paper: #f4f4f1;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; cursor: none; }
+  body {
+    background: var(--paper) url(/bg.jpg) center / cover no-repeat;
+    color: var(--ink);
+    font-family: "Plex Mono", "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Bakgrunden har logotyp uppe till vänster och bubblor till höger –
+     texten ligger i den lugna ytan till vänster, under logotypen. */
+  main {
+    position: absolute;
+    left: 3.1vw;
+    top: 26vh;
+    width: 40vw;               /* stannar före den stora bubblan */
+  }
+  h1 {
+    font-weight: 600;
+    font-size: 4.2vw;
+    white-space: nowrap;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+  }
+  .rule {
+    width: 6vw;
+    height: 0.45vw;
+    margin: 3.2vh 0 4.2vh;
+    background: var(--accent);
+  }
+  .label { color: var(--muted); }
+  .ssid, .pwlabel { font-size: 2.4vw; white-space: nowrap; }
+  .ssid { margin-bottom: 4vh; }
+  #password {
+    font-weight: 600;
+    font-size: 5vw;            /* krymps av fit() om lösenordet är långt */
+    line-height: 1.1;
+    white-space: nowrap;
+    margin-top: 0.6vh;
+    transition: opacity .6s ease;
+  }
+  #password.fading { opacity: 0; }
+  .stale #password { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Guest wifi setting</h1>
+  <div class="rule"></div>
+  <div class="ssid"><span class="label">Wifi name:</span> <span id="ssid">{{SSID}}</span></div>
+  <div class="pwlabel label">Password:</div>
+  <div id="password">{{PASSWORD}}</div>
+</main>
+<script>
+(function () {
+  var pw = document.getElementById("password");
+  var ssid = document.getElementById("ssid");
+  var version = null;
+  var failures = 0;
+
+  // Krymp lösenordet så att det alltid ryms på en rad i textytan.
+  function fit() {
+    pw.style.fontSize = "";
+    var max = pw.parentNode.clientWidth;
+    var size = parseFloat(getComputedStyle(pw).fontSize);
+    while (pw.scrollWidth > max && size > 10) {
+      size -= 2;
+      pw.style.fontSize = size + "px";
+    }
+  }
+
+  function show(st) {
+    ssid.textContent = st.ssid;
+    if (pw.textContent === st.password) return;
+    pw.classList.add("fading");
+    setTimeout(function () {
+      pw.textContent = st.password || "…";
+      fit();
+      pw.classList.remove("fading");
+    }, 600);
+  }
+
+  function poll() {
+    var xhr = new XMLHttpRequest();   // XHR i stället för fetch – fungerar i äldre skylt-webbläsare
+    xhr.open("GET", "/api/status?t=" + Date.now());
+    xhr.timeout = 8000;
+    xhr.onload = function () {
+      if (xhr.status !== 200) return fail();
+      try {
+        var st = JSON.parse(xhr.responseText);
+        failures = 0;
+        document.body.classList.toggle("stale", !st.verified);
+        if (st.version !== version) { version = st.version; show(st); }
+      } catch (e) { fail(); }
+    };
+    xhr.onerror = xhr.ontimeout = fail;
+    xhr.send();
+  }
+
+  function fail() {
+    // Behåll senast visade lösenord. Efter långvarigt avbrott: ladda om sidan.
+    if (++failures >= 120) location.reload();
+  }
+
+  window.addEventListener("resize", fit);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
+  fit();
+  poll();
+  setInterval(poll, 30000);
+})();
+</script>
+</body>
+</html>
