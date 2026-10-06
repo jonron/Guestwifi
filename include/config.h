@@ -1,5 +1,8 @@
 #pragma once
-// Icke-hemlig konfiguration. Hemligheter ligger i secrets.h (se secrets.example.h).
+// Icke-hemlig konfiguration. Hemligheter (WiFi-, UniFi- och admin-lösenord) matas in på
+// adminsidan http://<esp>/admin och sparas i ESP:ns NVS – de finns aldrig i koden.
+
+#define CFG_FIRMWARE_VERSION "1.1.0"
 
 // --- Nätverk (ESP:n sitter på IOT-nätet, aldrig på gästnätet) ---
 #define CFG_WIFI_SSID        "VidebergKraft_IOT"
@@ -27,3 +30,4 @@
 // --- OLED (ESP32-C3 0.42" 72x40 SSD1306: SDA=5, SCL=6) ---
 #define CFG_OLED_SDA         5
 #define CFG_OLED_SCL         6
+#define CFG_BOOT_BUTTON      9      // håll 10 s = radera sparade lösenord

@@ -17,10 +17,33 @@ void displayBegin() {
   Wire.begin(CFG_OLED_SDA, CFG_OLED_SCL);
   oled.begin();
   oled.setContrast(200);
+  displayNormal();
+}
+
+void displayNormal() {
   oled.clearBuffer();
   oled.setFont(u8g2_font_6x10_tr);  // 10 tecken × 6 px = 60 px
   centered("Guest wifi", 16);
   oled.setFont(u8g2_font_5x8_tr);   // 13 tecken × 5 px = 65 px
   centered("pwd generator", 31);
+  oled.sendBuffer();
+}
+
+// Setup-nätets namn, lösenord och adress – bara den som ser skärmen kan ansluta.
+void displaySetup(const char* ssid, const char* password, const char* ip) {
+  oled.clearBuffer();
+  oled.setFont(u8g2_font_5x8_tr);
+  centered(ssid, 9);
+  centered(password, 21);
+  centered(ip, 33);
+  oled.sendBuffer();
+}
+
+void displayMessage(const char* line1, const char* line2) {
+  oled.clearBuffer();
+  oled.setFont(u8g2_font_6x10_tr);
+  centered(line1, 16);
+  oled.setFont(u8g2_font_5x8_tr);
+  centered(line2, 31);
   oled.sendBuffer();
 }

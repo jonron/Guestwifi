@@ -386,6 +386,116 @@ static void test_web_content() {
   TEST_ASSERT_TRUE(d["verified"].as<bool>());
 }
 
+// ---------------------------------------------------------------- admin
+static void test_admin_validation() {
+  TEST_ASSERT_EQUAL_STRING("", validateWifiPassword("T9!vK#47@LxP2$M8qR&nW5").c_str());
+  TEST_ASSERT_TRUE(validateWifiPassword("short").size() > 0);
+  TEST_ASSERT_TRUE(validateWifiPassword(std::string(64, 'a')).size() > 0);
+  TEST_ASSERT_TRUE(validateWifiPassword("åäöåäöåäö").size() > 0);
+  TEST_ASSERT_EQUAL_STRING("", validateAdminPassword("tio-tecken").c_str());
+  TEST_ASSERT_TRUE(validateAdminPassword("kort").size() > 0);
+}
+
+static void test_fingerprint_normalization() {
+  const std::string want =
+      "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89";
+  TEST_ASSERT_EQUAL_STRING(want.c_str(), normalizeFingerprint(want).c_str());
+  TEST_ASSERT_EQUAL_STRING(
+      want.c_str(),
+      normalizeFingerprint("sha256 Fingerprint=abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\n")
+          .c_str());
+  TEST_ASSERT_EQUAL_STRING("", normalizeFingerprint("abc").c_str());
+  TEST_ASSERT_EQUAL_STRING("", normalizeFingerprint(std::string(64, 'z')).c_str());
+  uint8_t bytes[32];
+  for (int i = 0; i < 32; ++i) bytes[i] = static_cast<uint8_t>(i % 4 == 0 ? 0xAB : i % 4 == 1 ? 0xCD : i % 4 == 2 ? 0xEF : 0x01);
+  TEST_ASSERT_EQUAL_STRING(normalizeFingerprint("abcdef01abcdef01abcdef01abcdef01abcdef01abcdef01abcdef01abcdef01").c_str(),
+                           formatFingerprint(bytes).c_str());
+}
+
+static void test_constant_time_equals() {
+  TEST_ASSERT_TRUE(constantTimeEquals("abc", "abc"));
+  TEST_ASSERT_FALSE(constantTimeEquals("abc", "abd"));
+  TEST_ASSERT_FALSE(constantTimeEquals("abc", "abcd"));
+  TEST_ASSERT_FALSE(constantTimeEquals("", "a"));
+  TEST_ASSERT_TRUE(constantTimeEquals("", ""));
+}
+
+static void test_login_throttle() {
+  LoginThrottle t(3, 60000);
+  t.fail(1000);
+  t.fail(2000);
+  TEST_ASSERT_FALSE(t.locked(2000));
+  t.fail(3000);
+  TEST_ASSERT_TRUE(t.locked(3000));
+  TEST_ASSERT_EQUAL_UINT32(60, t.secondsLeft(3000));
+  TEST_ASSERT_TRUE(t.locked(62999));
+  TEST_ASSERT_FALSE(t.locked(63000));
+  t.fail(64000);  // ny omgång efter spärren
+  TEST_ASSERT_FALSE(t.locked(64000));
+  t.success();
+  t.fail(65000);
+  t.fail(66000);
+  TEST_ASSERT_FALSE(t.locked(66000));
+}
+
+static AdminView fullView() {
+  AdminView v;
+  v.loggedIn = true;
+  v.csrf = "tok123";
+  v.hasWifiPassword = v.hasUdmUser = v.hasUdmPassword = v.hasAdminPassword = true;
+  v.wifiSsid = "VidebergKraft_IOT";
+  v.guestSsid = "VidebergKraft_Guest";
+  v.guestPassword = "Sunny-Tiger-47";
+  v.fingerprint = "AB:CD";
+  return v;
+}
+
+static void test_admin_page_login_only_when_logged_out() {
+  AdminView v = fullView();
+  v.loggedIn = false;
+  std::string page = renderAdminPage(v);
+  TEST_ASSERT_TRUE(page.find("/admin/login") != std::string::npos);
+  TEST_ASSERT_TRUE(page.find("Sunny-Tiger-47") == std::string::npos);  // ingen status före inloggning
+  TEST_ASSERT_TRUE(page.find("/admin/secrets") == std::string::npos);
+  v.lockedSeconds = 42;
+  page = renderAdminPage(v);
+  TEST_ASSERT_TRUE(page.find("42 sekunder") != std::string::npos);
+  TEST_ASSERT_TRUE(page.find("name=\"password\"") == std::string::npos);
+}
+
+static void test_admin_page_never_prefills_secrets() {
+  std::string page = renderAdminPage(fullView());
+  TEST_ASSERT_TRUE(page.find("/admin/secrets") != std::string::npos);
+  // Lösenordsfält får aldrig ha value-attribut.
+  size_t pos = 0;
+  int fields = 0;
+  while ((pos = page.find("type=\"password\"", pos)) != std::string::npos) {
+    size_t end = page.find('>', pos);
+    std::string tag = page.substr(pos, end - pos);
+    TEST_ASSERT_TRUE_MESSAGE(tag.find("value=") == std::string::npos, tag.c_str());
+    fields++;
+    pos = end;
+  }
+  TEST_ASSERT_EQUAL(5, fields);  // wifi, udm-user, udm-pass, admin, admin2
+  TEST_ASSERT_TRUE(page.find("name=\"csrf\" value=\"tok123\"") != std::string::npos);
+  TEST_ASSERT_TRUE(page.find("✓ satt") != std::string::npos);
+}
+
+static void test_admin_page_escapes_and_setup_mode() {
+  AdminView v = fullView();
+  v.loggedIn = false;
+  v.setupMode = true;
+  v.hasAdminPassword = v.hasWifiPassword = false;
+  v.lastError = "<script>alert(1)</script>";
+  v.message = "\"><img>";
+  std::string page = renderAdminPage(v);
+  TEST_ASSERT_TRUE(page.find("<script>alert") == std::string::npos);
+  TEST_ASSERT_TRUE(page.find("<img>") == std::string::npos);
+  TEST_ASSERT_TRUE(page.find("Första start") != std::string::npos);
+  TEST_ASSERT_TRUE(page.find("/admin/login") == std::string::npos);
+  TEST_ASSERT_TRUE(page.find("/admin/rotate") == std::string::npos);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_wordlist_is_clean);
@@ -409,5 +519,12 @@ int main() {
   RUN_TEST(test_sync);
   RUN_TEST(test_schedule);
   RUN_TEST(test_web_content);
+  RUN_TEST(test_admin_validation);
+  RUN_TEST(test_fingerprint_normalization);
+  RUN_TEST(test_constant_time_equals);
+  RUN_TEST(test_login_throttle);
+  RUN_TEST(test_admin_page_login_only_when_logged_out);
+  RUN_TEST(test_admin_page_never_prefills_secrets);
+  RUN_TEST(test_admin_page_escapes_and_setup_mode);
   return UNITY_END();
 }

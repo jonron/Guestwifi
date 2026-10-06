@@ -2,6 +2,9 @@
 //
 // Varje natt 03:00: generera "Ord-Ord-NN" -> skriv till UDM Pro Max ->
 // läs tillbaka och verifiera -> först då visas lösenordet på skyltsidan.
+//
+// Hemligheter (WiFi, UniFi, admin) matas in på /admin och sparas i NVS.
+// Saknas de startar ESP:n ett eget setup-nät vars namn och lösenord visas på OLED:en.
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -10,42 +13,46 @@
 #include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <esp_random.h>
-#include <esp_wifi.h>
 
 #include <atomic>
 #include <ctime>
+#include <memory>
 #include <mutex>
 
+#include "AdminWeb.h"
 #include "Display.h"
 #include "EspHttpTransport.h"
+#include "Settings.h"
 #include "config.h"
-
-#if __has_include("secrets.h")
-#include "secrets.h"
-#else
-#error "Skapa include/secrets.h utifrån include/secrets.example.h"
-#endif
 
 extern const char kIndexHtml[] asm("_binary_src_web_index_html_start");
 
 // ------------------------------------------------------------------ tillstånd
-static std::mutex gMutex;
-static guest::PublicStatus gStatus;  // det som skyltarna ser (skyddas av gMutex)
+static Settings gSettings;
+
+static std::mutex gMutex;            // skyddar gStatus, gLastError
+static guest::PublicStatus gStatus;  // det som skyltarna ser
 static std::string gLastError;
 static int gLastRotatedYmd = 0;
 static int gFailures = 0;
 static std::atomic<bool> gRotateRequested{false};
+static std::atomic<uint32_t> gRestartAt{0};
+
+static std::mutex gUnifiMutex;  // UniFi-klienten används av både rotationstråd och adminsida
+static std::unique_ptr<EspHttpTransport> gTransport;
+static std::unique_ptr<guest::UnifiClient> gUnifi;
+static std::unique_ptr<guest::Rotator> gRotator;
+static guest::PasswordGenerator gGenerator([] { return esp_random(); });
+static const guest::Schedule gSchedule(CFG_ROTATE_HOUR, CFG_ROTATE_MINUTE, CFG_CATCHUP_UNTIL);
 
 static Preferences gPrefs;
 static WebServer gServer(80);
 
-static EspHttpTransport gTransport(CFG_UDM_HOST, CFG_UDM_PORT, SECRET_UDM_CERT_SHA256);
-static guest::UnifiClient gUnifi(gTransport, SECRET_UDM_USER, SECRET_UDM_PASS, CFG_UNIFI_SITE);
-static guest::PasswordGenerator gGenerator([] { return esp_random(); });
-static guest::Rotator gRotator(gUnifi, gGenerator, CFG_GUEST_SSID,
-                               [](uint32_t ms) { vTaskDelay(pdMS_TO_TICKS(ms)); });
-static const guest::Schedule gSchedule(CFG_ROTATE_HOUR, CFG_ROTATE_MINUTE, CFG_CATCHUP_UNTIL);
+static bool gApActive = false;
+static uint32_t gApStartedAt = 0;
+static std::string gApSsid;
 
 // ------------------------------------------------------------------ hjälpare
 static bool timeValid() { return time(nullptr) > 1700000000; }
@@ -101,7 +108,12 @@ static void markRotated(int ymd) {
 // ------------------------------------------------------------------ rotation
 static void doSync() {
   std::string current, err;
-  if (!gRotator.sync(current, err)) {
+  bool ok;
+  {
+    std::lock_guard<std::mutex> lock(gUnifiMutex);
+    ok = gRotator->sync(current, err);
+  }
+  if (!ok) {
     Serial.printf("[unifi] kunde inte läsa %s: %s\n", CFG_GUEST_SSID, err.c_str());
     setError(err);
     return;
@@ -121,7 +133,11 @@ static void doRotate(bool manual) {
     previous = gStatus.password;
   }
   Serial.printf("[rot] startar %s rotation\n", manual ? "manuell" : "schemalagd");
-  guest::RotateResult r = gRotator.rotate(previous);
+  guest::RotateResult r;
+  {
+    std::lock_guard<std::mutex> lock(gUnifiMutex);
+    r = gRotator->rotate(previous);
+  }
   if (r.ok) {
     publishVerified(r.password, true);
     if (timeValid()) markRotated(localNow().ymd());
@@ -142,7 +158,7 @@ static void rotationTask(void*) {
 
   for (;;) {
     vTaskDelay(pdMS_TO_TICKS(1000));
-    if (WiFi.status() != WL_CONNECTED) continue;
+    if (WiFi.status() != WL_CONNECTED || gSettings.udmUser.empty()) continue;
 
     const uint32_t now = millis();
     if (!synced || now - lastSync > CFG_RESYNC_MINUTES * 60000UL) {
@@ -166,6 +182,94 @@ static void rotationTask(void*) {
   }
 }
 
+// ------------------------------------------------------------------ setup-nät
+// Eget WiFi-nät för första inställningen (eller när IOT-nätet inte går att nå).
+static void startSetupAp() {
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  char ssid[24];
+  snprintf(ssid, sizeof(ssid), "GW-Setup-%02X%02X", mac[4], mac[5]);
+  gApSsid = ssid;
+  const std::string pass = randomReadable(10);
+
+  WiFi.setAutoReconnect(false);
+  WiFi.disconnect();
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(ssid, pass.c_str());
+  gApActive = true;
+  gApStartedAt = millis();
+
+  const std::string ip = WiFi.softAPIP().toString().c_str();
+  displaySetup(ssid, pass.c_str(), ip.c_str());
+  Serial.printf("[setup] eget nät %s – lösenordet visas på skärmen. Öppna http://%s/admin\n", ssid,
+                ip.c_str());
+}
+
+// ------------------------------------------------------------------ adminsidans koppling
+static void fillAdminStatus(guest::AdminView& v) {
+  v.wifiSsid = CFG_WIFI_SSID;
+  v.wifiConnected = WiFi.status() == WL_CONNECTED;
+  v.ip = WiFi.localIP().toString().c_str();
+  v.rssi = WiFi.RSSI();
+  v.guestSsid = CFG_GUEST_SSID;
+  v.time = isoNow();
+  v.firmware = CFG_FIRMWARE_VERSION;
+  if (gLastRotatedYmd) {
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%04d-%02d-%02d", gLastRotatedYmd / 10000, gLastRotatedYmd / 100 % 100,
+             gLastRotatedYmd % 100);
+    v.lastRotated = buf;
+  }
+  std::lock_guard<std::mutex> lock(gMutex);
+  v.guestPassword = gStatus.verified ? gStatus.password : "";
+  v.lastError = gLastError;
+}
+
+static bool testUnifi(std::string& message) {
+  if (!gUnifi) {
+    message = "Inte ansluten till IOT-nätet.";
+    return false;
+  }
+  if (gSettings.udmUser.empty()) {
+    message = "Fyll i UniFi-användare och lösenord först.";
+    return false;
+  }
+  std::unique_lock<std::mutex> lock(gUnifiMutex, std::try_to_lock);
+  if (!lock.owns_lock()) {
+    message = "En rotation pågår – försök igen om en minut.";
+    return false;
+  }
+  std::string pw;
+  if (!gUnifi->readPassphrase(CFG_GUEST_SSID, pw)) {
+    message = "UniFi-test misslyckades: " + gUnifi->lastError();
+    return false;
+  }
+  message = std::string("UniFi fungerar – hittade ") + CFG_GUEST_SSID + ".";
+  return true;
+}
+
+static bool fetchFingerprint(std::string& fingerprint, std::string& error) {
+  if (WiFi.status() != WL_CONNECTED) {
+    error = "inte ansluten till IOT-nätet";
+    return false;
+  }
+  WiFiClientSecure client;
+  client.setInsecure();
+  if (!client.connect(CFG_UDM_HOST, CFG_UDM_PORT, 10000)) {
+    error = std::string("kan inte ansluta till ") + CFG_UDM_HOST;
+    return false;
+  }
+  uint8_t sha[32];
+  const bool ok = client.getFingerprintSHA256(sha);
+  client.stop();
+  if (!ok) {
+    error = "fick inget certifikat";
+    return false;
+  }
+  fingerprint = guest::formatFingerprint(sha);
+  return true;
+}
+
 // ------------------------------------------------------------------ webb
 static void sendNoStore(int code, const char* type, const std::string& body) {
   gServer.sendHeader("Cache-Control", "no-store");
@@ -174,6 +278,11 @@ static void sendNoStore(int code, const char* type, const std::string& body) {
 
 static void setupWeb() {
   gServer.on("/", HTTP_GET, [] {
+    if (!gSettings.provisioned()) {
+      gServer.sendHeader("Location", "/admin");
+      gServer.send(303, "text/plain", "");
+      return;
+    }
     guest::PublicStatus st;
     {
       std::lock_guard<std::mutex> lock(gMutex);
@@ -198,6 +307,7 @@ static void setupWeb() {
       doc["verified"] = gStatus.verified;
       doc["last_error"] = gLastError;
     }
+    doc["firmware"] = CFG_FIRMWARE_VERSION;
     doc["uptime_s"] = millis() / 1000;
     doc["heap"] = ESP.getFreeHeap();
     doc["rssi"] = WiFi.RSSI();
@@ -209,26 +319,26 @@ static void setupWeb() {
     sendNoStore(200, "application/json", json);
   });
 
-  gServer.on("/api/rotate", HTTP_POST, [] {
-    if (gServer.header("Authorization") != String("Bearer ") + SECRET_ADMIN_TOKEN) {
-      sendNoStore(401, "text/plain", "unauthorized\n");
-      return;
-    }
-    gRotateRequested = true;
-    sendNoStore(202, "text/plain", "rotation startad\n");
-  });
+  AdminContext ctx;
+  ctx.settings = &gSettings;
+  ctx.fillStatus = fillAdminStatus;
+  ctx.testUnifi = testUnifi;
+  ctx.fetchFingerprint = fetchFingerprint;
+  ctx.requestRotate = [] { gRotateRequested = true; };
+  ctx.scheduleRestart = [](uint32_t delayMs) { gRestartAt = millis() + delayMs; };
+  adminBegin(gServer, ctx);
 
-  gServer.serveStatic("/bg.jpg", LittleFS, "/bg.jpg", "max-age=86400");
+  gServer.serveStatic("/bg.jpg", LittleFS, "/bg.jpg", "max-age=3600");
   gServer.serveStatic("/fonts/", LittleFS, "/fonts/", "max-age=604800");
   gServer.onNotFound([] { sendNoStore(404, "text/plain", "not found\n"); });
 
-  const char* headers[] = {"Authorization"};
+  const char* headers[] = {"Cookie"};
   gServer.collectHeaders(headers, 1);
   gServer.begin();
 }
 
 // ------------------------------------------------------------------ WiFi
-static void setupWifi() {
+static void startStation() {
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
   WiFi.setHostname("guestwifi");
@@ -236,11 +346,11 @@ static void setupWifi() {
               IPAddress(CFG_DNS));
   WiFi.setMinSecurity(WIFI_AUTH_WPA3_PSK);  // IOT-nätet kör ren WPA3 (SAE)
   WiFi.setAutoReconnect(true);
-  WiFi.begin(CFG_WIFI_SSID, SECRET_WIFI_PASSWORD);
+  WiFi.begin(CFG_WIFI_SSID, gSettings.wifiPassword.c_str());
   WiFi.setSleep(false);  // snabbare svar till skyltarna
 
   Serial.printf("[wifi] ansluter till %s", CFG_WIFI_SSID);
-  for (int i = 0; i < 60 && WiFi.status() != WL_CONNECTED; ++i) {
+  for (int i = 0; i < 40 && WiFi.status() != WL_CONNECTED; ++i) {
     delay(500);
     Serial.print('.');
   }
@@ -253,41 +363,103 @@ static void setupWifi() {
   }
 }
 
+// ------------------------------------------------------------------ BOOT-knappen
+// Håll BOOT intryckt i 10 s för att radera alla sparade lösenord (fysisk åtkomst krävs).
+static void checkFactoryResetButton() {
+  static uint32_t pressedSince = 0;
+  static bool shown = false;
+  if (digitalRead(CFG_BOOT_BUTTON) == LOW) {
+    if (pressedSince == 0) pressedSince = millis();
+    const uint32_t held = millis() - pressedSince;
+    if (held > 3000 && !shown) {
+      displayMessage("Reset?", "hall kvar 10 s");
+      shown = true;
+    }
+    if (held > 10000) {
+      settingsErase();
+      displayMessage("Reset", "startar om");
+      Serial.println("[setup] fabriksåterställd med BOOT-knappen");
+      delay(1000);
+      ESP.restart();
+    }
+  } else if (pressedSince != 0) {
+    pressedSince = 0;
+    if (shown) {
+      shown = false;
+      if (!gApActive) displayNormal();
+    }
+  }
+}
+
 // ------------------------------------------------------------------ start
 void setup() {
   Serial.begin(115200);
   delay(300);
-  Serial.println("\n[boot] Guest WiFi password rotator");
+  Serial.printf("\n[boot] Guest WiFi password rotator %s\n", CFG_FIRMWARE_VERSION);
 
+  pinMode(CFG_BOOT_BUTTON, INPUT_PULLUP);
   displayBegin();
 
   if (!LittleFS.begin(true)) Serial.println("[fs] LittleFS kunde inte monteras");
-  if (!LittleFS.exists("/bg.jpg")) Serial.println("[fs] /bg.jpg saknas – kör 'pio run -t uploadfs'");
 
+  settingsLoad(gSettings);
   gPrefs.begin("guestwifi", false);
   gLastRotatedYmd = gPrefs.getInt("lastYmd", 0);
   gStatus.ssid = CFG_GUEST_SSID;
-  gStatus.password = gPrefs.getString("password", "").c_str();  // visas gråat tills routern bekräftat
+  gStatus.password = gPrefs.getString("password", "").c_str();  // gråat tills routern bekräftat
   gStatus.version = 1;
 
-  setupWifi();
+  if (!gSettings.provisioned()) {
+    Serial.println("[setup] inga inställningar sparade – startar setup-läge");
+    startSetupAp();
+    setupWeb();
+    return;
+  }
+
+  gTransport.reset(new EspHttpTransport(CFG_UDM_HOST, CFG_UDM_PORT, gSettings.fingerprint));
+  gUnifi.reset(new guest::UnifiClient(*gTransport, gSettings.udmUser, gSettings.udmPassword,
+                                      CFG_UNIFI_SITE));
+  gRotator.reset(new guest::Rotator(*gUnifi, gGenerator, CFG_GUEST_SSID,
+                                    [](uint32_t ms) { vTaskDelay(pdMS_TO_TICKS(ms)); }));
+  if (gSettings.fingerprint.empty()) {
+    Serial.println("[unifi] VARNING: inget certifikat-fingeravtryck – UDM:ens identitet kontrolleras inte");
+  }
+
+  startStation();
   configTzTime(CFG_TZ, CFG_NTP_1, CFG_NTP_2, CFG_NTP_3);
   setupWeb();
-
   xTaskCreate(rotationTask, "rotation", 12288, nullptr, 1, nullptr);
 }
 
 void loop() {
   gServer.handleClient();
+  checkFactoryResetButton();
 
-  // Startar om om WiFi varit nere i över 10 minuter (självläkning).
+  const uint32_t restartAt = gRestartAt;
+  if (restartAt && (int32_t)(millis() - restartAt) >= 0) {
+    Serial.println("[boot] startar om");
+    delay(200);
+    ESP.restart();
+  }
+
+  if (!gSettings.provisioned()) {
+    delay(2);
+    return;  // setup-läge: bara webbservern
+  }
+
+  // Når vi inte IOT-nätet på 3 minuter startas setup-nätet så att lösenordet kan rättas.
+  // Efter 15 minuter utan inloggad admin startar ESP:n om och försöker igen.
   static uint32_t downSince = 0;
   if (WiFi.status() == WL_CONNECTED) {
     downSince = 0;
-  } else if (downSince == 0) {
-    downSince = millis();
-  } else if (millis() - downSince > 10UL * 60 * 1000) {
-    Serial.println("[wifi] nere för länge – startar om");
+  } else if (!gApActive) {
+    if (downSince == 0) downSince = millis();
+    if (millis() - downSince > 3UL * 60 * 1000) {
+      Serial.println("[wifi] når inte IOT-nätet – startar setup-nätet");
+      startSetupAp();
+    }
+  } else if (millis() - gApStartedAt > 15UL * 60 * 1000 && !adminRecentlyActive(5UL * 60 * 1000)) {
+    Serial.println("[wifi] setup-nätet oanvänt – startar om och försöker igen");
     ESP.restart();
   }
   delay(2);

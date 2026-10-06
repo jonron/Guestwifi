@@ -15,40 +15,57 @@ ESP32-C3 (192.168.40.6, VidebergKraft_IOT, WPA3)
   └─ HTTP :80 ◀── skylt 1, skylt 2         (sidan hämtar /api/status var 30:e sekund)
 ```
 
-## Kom igång
+## Kom igång (utan att installera något)
 
-1. **Hemligheter:** kopiera `include/secrets.example.h` till `include/secrets.h` och fyll i:
+### 1. Flasha från webbläsaren
+1. Anslut ESP32-C3 med en USB-kabel som klarar data.
+2. Öppna **https://espressif.github.io/esptool-js/** i Chrome eller Edge.
+3. Klicka på **Connect** och välj porten (ofta "USB JTAG/serial debug unit").
+   Hittas inte kortet: håll in **BOOT**, tryck kort på **RESET** och släpp BOOT.
+4. Ange adressen `0x0` och välj filen `release/guestwifi-esp32c3-full.bin`.
+5. Klicka på **Program** och vänta tills det är klart. Tryck sedan på **RESET** på kortet.
+
+### 2. Första inställningen
+1. OLED:en visar namnet på ett setup-nät (`GW-Setup-XXXX`), ett lösenord och `192.168.4.1`.
+2. Anslut telefonen eller datorn till det nätet och öppna **http://192.168.4.1/admin**.
+3. Fyll i följande och klicka på **Spara**:
    - lösenordet till `VidebergKraft_IOT`
-   - UniFi-kontot (se nedan)
-   - certifikatets fingeravtryck
-   - en admin-token
+   - UniFi-användare och UniFi-lösenord
+   - ett admin-lösenord
+4. ESP:n startar om och ansluter till IOT-nätet.
+5. Gå till **http://192.168.40.6/admin**, logga in och gör följande:
+   - klicka på **Hämta fingeravtryck från UDM** och jämför gärna värdet med certifikatet i UniFi OS
+   - klicka på **Testa UniFi**
+   - ladda upp **bakgrundsbilden** (JPEG, max 800 KB)
+   - klicka på **Rotera nu** för att se att hela kedjan fungerar
+6. Peka skyltarna mot **http://192.168.40.6/**.
 
-   `secrets.h` checkas aldrig in.
-2. **Bakgrundsbild:** spara bakgrunden som `data/bg.jpg`, helst 1920×1080 JPEG under cirka 500 KB.
-3. **Flasha:**
-   ```sh
-   pio run -e esp32c3 -t upload      # firmware
-   pio run -e esp32c3 -t uploadfs    # data/ (bakgrund + typsnitt) till LittleFS
-   pio device monitor                # följ loggen
-   ```
-4. Öppna `http://192.168.40.6/` på skyltarna, i fullskärm eller kiosk-läge.
+### Uppdatera firmware senare
+Flasha `release/guestwifi-esp32c3-app.bin` på adressen **`0x10000`**. Då behålls sparade inställningar och bakgrundsbilden.
+Om du i stället flashar `-full.bin` på `0x0` raderas allt, och du får göra setup igen.
 
 ### UniFi-konto
 Skapa ett separat konto i UniFi OS under *Admins & Users*:
 - **Restrict to local access only** (inget UI-konto, ingen MFA)
 - roll i Network: **Site Admin**, eftersom kontot behöver kunna ändra WiFi
 
-### Certifikat-pinning
-UDM:en har ett självsignerat certifikat. ESP:n kontrollerar dess SHA-256-fingeravtryck i stället för en CA-kedja:
-```sh
-openssl s_client -connect 192.168.40.1:443 </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256
-```
-Klistra in värdet i `SECRET_UDM_CERT_SHA256`. Om UDM:en byter certifikat (efter fabriksåterställning eller eget certifikat) loggar ESP:n "fingeravtrycket stämmer inte" och lösenordet roteras inte förrän du uppdaterat värdet.
+## Hemligheter – var de finns och vem som kan läsa dem
+- **I koden:** inga hemligheter. Firmware-filerna innehåller inga lösenord och kan delas fritt.
+- **Adminsidan:** fälten kan bara skrivas. Sidan visar enbart "✓ satt / ✗ saknas", och inget API returnerar värdena. Det kontrolleras av ett enhetstest.
+- **Admin-lösenordet** sparas bara som PBKDF2-SHA256-hash med salt (10 000 iterationer).
+  - Efter 5 felaktiga försök spärras inloggningen i 5 minuter.
+  - Sessionen gäller i 15 minuter och skyddas med cookie (`HttpOnly`, `SameSite=Strict`) och CSRF-token.
+- **Seriell-loggen** skriver aldrig ut några hemliga värden.
+- **Setup-nätet** har ett slumpat lösenord som bara visas på OLED:en, så den som vill göra setup måste stå vid enheten.
+  - Når ESP:n inte IOT-nätet på 3 minuter startar setup-nätet igen, men då krävs admin-inloggning.
+- **Fabriksåterställning:** håll BOOT intryckt i 10 sekunder, eller använd knappen på adminsidan.
+- **Begränsningar:**
+  - Adminsidan går över vanlig HTTP. Gör inställningar via setup-nätet (krypterat med WPA2) eller från IOT-nätet (WPA3), inte över ett okrypterat trådat nät.
+  - Värdena ligger i ESP:ns NVS. Den som har fysisk åtkomst och USB-kabel kan läsa ut flashminnet. Skydd mot det kräver flash-kryptering (eFuse, oåterkalleligt) och ingår inte.
 
-### Testa utan att vänta till natten
+## Status via API
 ```sh
-curl -X POST -H "Authorization: Bearer <SECRET_ADMIN_TOKEN>" http://192.168.40.6/api/rotate
-curl http://192.168.40.6/api/health     # status, senaste fel, heap, RSSI
+curl http://192.168.40.6/api/health     # status, senaste fel, heap, RSSI (inga hemligheter)
 curl http://192.168.40.6/api/status     # det skyltarna ser
 ```
 
@@ -65,8 +82,9 @@ curl http://192.168.40.6/api/status     # det skyltarna ser
 
 Lösenordet sparas i NVS. Efter en omstart visas det gråat tills UDM:en har bekräftat det igen.
 
-## Inställningar
+## Bygga själv
 `include/config.h` innehåller SSID:er, IP-adresser, tid för rotation, tidszon och OLED-pinnar.
+Med PlatformIO installerat bygger `tools/make_release.sh` om filerna i `release/`.
 
 ## Tester och simulering (på datorn)
 ```sh
@@ -92,9 +110,12 @@ lib/GuestCore/   plattformsoberoende kärna (testas på datorn)
   Rotator                       skriv → verifiera → godkänn
   Schedule                      03:00, ta-igen-fönster, backoff
   Http, WebContent              HTTP/1.1-tolkning, skyltsida och JSON
-src/             ESP32-specifikt: WiFi, HTTPS, OLED, webbserver
+  Admin                         adminsidans HTML, validering, inloggningsspärr
+src/             ESP32-specifikt: WiFi, HTTPS, OLED, webbserver, adminsida (AdminWeb), NVS (Settings)
 src/web/         skyltsidan (bäddas in i firmware)
 data/            LittleFS: bg.jpg + typsnittet IBM Plex Mono (OFL)
 sim/             mock-UDM och simulator
+release/         färdiga .bin-filer för flashning från webbläsaren
+tools/           make_release.sh
 test/            enhetstester
 ```
