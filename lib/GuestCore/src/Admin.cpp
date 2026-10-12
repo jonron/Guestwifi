@@ -19,6 +19,29 @@ std::string validateAdminPassword(const std::string& pw) {
   return "";
 }
 
+std::string validateSsid(const std::string& ssid) {
+  if (ssid.empty() || ssid.size() > 32) return "WiFi-namnet måste vara 1–32 tecken.";
+  return "";
+}
+
+std::string validateIpv4(const std::string& ip) {
+  if (ip.empty()) return "";
+  int parts = 0;
+  size_t pos = 0;
+  while (pos <= ip.size()) {
+    size_t dot = ip.find('.', pos);
+    std::string part = ip.substr(pos, dot == std::string::npos ? std::string::npos : dot - pos);
+    if (part.empty() || part.size() > 3) return "Ogiltig IP-adress.";
+    for (char c : part)
+      if (c < '0' || c > '9') return "Ogiltig IP-adress.";
+    if (std::stoi(part) > 255) return "Ogiltig IP-adress.";
+    parts++;
+    if (dot == std::string::npos) break;
+    pos = dot + 1;
+  }
+  return parts == 4 ? "" : "Ogiltig IP-adress.";
+}
+
 std::string normalizeFingerprint(const std::string& input) {
   std::string s = input;
   const size_t eq = s.find('=');
@@ -172,6 +195,9 @@ std::string renderAdminPage(const AdminView& v) {
   h += "<tr><td>WiFi (" + esc(v.wifiSsid) + ")</td><td>" +
        (v.wifiConnected ? "ansluten, " + esc(v.ip) + ", RSSI " + std::to_string(v.rssi) + " dBm"
                         : std::string("inte ansluten")) + "</td></tr>";
+  h += "<tr><td>Läge</td><td>" + std::string(v.localMode ? "Lokalt test – UniFi ej inställt, lösenordet byts bara här"
+                                                          : "UniFi (UDM)") + "</td></tr>";
+  if (!v.band.empty()) h += "<tr><td>Band</td><td>" + esc(v.band) + "</td></tr>";
   h += "<tr><td>Gästnät</td><td>" + esc(v.guestSsid) + "</td></tr>";
   h += "<tr><td>Gästlösenord</td><td>" + (v.guestPassword.empty() ? "–" : esc(v.guestPassword)) +
        "</td></tr>";
@@ -185,17 +211,23 @@ std::string renderAdminPage(const AdminView& v) {
   if (!v.setupMode) {
     h += "<div class=\"row\">" + postButton(v, "/admin/rotate", "Rotera nu", "",
                                             "Byta gästlösenordet nu? Anslutna gäster kopplas ner.") +
-         postButton(v, "/admin/test", "Testa UniFi", "secondary") + "</div>";
+         (v.localMode ? std::string() : postButton(v, "/admin/test", "Testa UniFi", "secondary")) + "</div>";
   }
   h += "</section>";
 
   // ---- hemligheter
   h += "<section><h2>Inställningar</h2><form method=\"post\" action=\"/admin/secrets\" autocomplete=\"off\">" +
        csrfField(v);
-  h += secretInput("wifi_pass", ("Lösenord till " + esc(v.wifiSsid)).c_str(), v.hasWifiPassword,
-                   "WPA3-lösenordet till IOT-nätet ESP:n ansluter till.", true);
+  h += "<label for=\"wifi_ssid\">WiFi-namn<br><span class=\"hint\">Nätet ESP:n ansluter till (endast 5 GHz).</span></label>"
+       "<input type=\"text\" id=\"wifi_ssid\" name=\"wifi_ssid\" spellcheck=\"false\" required maxlength=\"32\" value=\"" +
+       esc(v.wifiSsid) + "\">";
+  h += secretInput("wifi_pass", "WiFi-lösenord", v.hasWifiPassword,
+                   "Lösenordet till nätet ovan.", true);
+  h += "<label for=\"static_ip\">Fast IP-adress<br><span class=\"hint\">Tomt = DHCP. Med fast IP används /24 och gateway x.y.z.1.</span></label>"
+       "<input type=\"text\" id=\"static_ip\" name=\"static_ip\" spellcheck=\"false\" placeholder=\"DHCP\" value=\"" +
+       esc(v.staticIp) + "\">";
   h += secretInput("udm_user", "UniFi-användare", v.hasUdmUser,
-                   "Lokalt konto i UniFi OS (Site Admin, endast lokal åtkomst).", false);
+                   "Lokalt konto i UniFi OS (Site Admin, endast lokal åtkomst). Tomt = lokalt testläge.", false);
   h += secretInput("udm_pass", "UniFi-lösenord", v.hasUdmPassword, "", false);
   h += "<label for=\"fingerprint\">UDM-certifikatets SHA-256 " + state(!v.fingerprint.empty()) +
        "<br><span class=\"hint\">Inte hemligt. Lämna tomt och använd knappen nedan för att hämta det från UDM:en.</span></label>"

@@ -1,9 +1,12 @@
 #include "Display.h"
 
-#include <U8g2lib.h>
-#include <Wire.h>
+#include <Arduino.h>
 
 #include "config.h"
+
+#if CFG_HAS_OLED
+#include <U8g2lib.h>
+#include <Wire.h>
 
 // ESP32-C3-kort med inbyggd 0.42" OLED: SSD1306-styrkrets, 72x40 synliga pixlar.
 static U8G2_SSD1306_72X40_ER_F_HW_I2C oled(U8G2_R0, U8X8_PIN_NONE, CFG_OLED_SCL, CFG_OLED_SDA);
@@ -46,4 +49,27 @@ void displayMessage(const char* line1, const char* line2) {
   oled.setFont(u8g2_font_5x8_tr);
   centered(line2, 31);
   oled.sendBuffer();
+}
+#else
+void displayBegin() {}
+void displayNormal() {}
+void displaySetup(const char*, const char*, const char*) {}
+void displayMessage(const char*, const char*) {}
+#endif
+
+void statusLed(LedState state) {
+#ifdef RGB_BUILTIN
+  uint8_t r = 0, g = 0, b = 0;
+  switch (state) {
+    case LedState::Booting: r = 8, g = 8, b = 8; break;      // svagt vitt
+    case LedState::Connecting: b = 24; break;                // blått
+    case LedState::Online: g = 10; break;                    // grönt
+    case LedState::Setup: r = 20, b = 20; break;             // lila
+    case LedState::Error: r = 30; break;                     // rött
+    case LedState::Rotating: r = 25, g = 15; break;          // gult
+  }
+  rgbLedWrite(RGB_BUILTIN, r, g, b);
+#else
+  (void)state;
+#endif
 }

@@ -4,15 +4,19 @@
 // Hemliga inställningar i NVS. Skrivs via adminsidan och lämnar aldrig
 // enheten: inget API eller någon sida returnerar dem.
 struct Settings {
-  std::string wifiPassword;  // till CFG_WIFI_SSID
+  std::string wifiSsid;      // inte hemligt
+  std::string wifiPassword;
+  std::string staticIp;      // inte hemligt; tomt = DHCP
   std::string udmUser;
   std::string udmPassword;
   std::string fingerprint;   // UDM-certifikatets SHA-256 (inte hemligt)
   std::string adminHash;     // "pbkdf2-sha256$<iter>$<salt>$<hash>" – lösenordet sparas aldrig
 
-  bool provisioned() const { return !wifiPassword.empty() && !adminHash.empty(); }
+  bool wifiConfigured() const { return !wifiSsid.empty() && !wifiPassword.empty(); }
+  bool unifiConfigured() const { return !udmUser.empty() && !udmPassword.empty(); }
 };
 
+// Värden som saknas i NVS tas från CFG_DEFAULT_* i config.h.
 void settingsLoad(Settings& s);
 void settingsSave(const Settings& s);
 void settingsErase();

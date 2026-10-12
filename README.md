@@ -1,16 +1,20 @@
 # Guest WiFi – nattligt lösenord för VidebergKraft_Guest
 
-ESP32-C3 (med 0,42" OLED) som varje natt kl. 03:00:
+ESP32-C5 (Waveshare ESP32-C5-WROOM-1, 16 MB flash) som varje natt kl. 03:00:
 
 1. skapar ett lättläst lösenord, två engelska ord och två siffror, t.ex. `Honey-Eager-27`
 2. skriver det till gäst-WLAN:et i **UDM Pro Max** via UniFi:s lokala API
 3. läser tillbaka från UDM:en och **verifierar** att lösenordet gäller
-4. först därefter visas lösenordet på skyltsidan `http://192.168.40.6/`
+4. först därefter visas lösenordet på skyltsidan
 
-OLED-skärmen visar "Guest wifi" / "pwd generator".
+ESP:n ansluter **endast på 5 GHz**.
+
+**Lokalt testläge:** utan UniFi-konto byts lösenordet bara i ESP:n. Så kan schemat, adminsidan och skyltsidan testas innan UDM-kopplingen är på plats.
+
+Det äldre ESP32-C3-kortet med 0,42" OLED stöds fortfarande som `env:esp32c3`, men bara på 2,4 GHz.
 
 ```
-ESP32-C3 (192.168.40.6, VidebergKraft_IOT, WPA3)
+ESP32-C5 (5 GHz)
   ├─ HTTPS ──▶ UDM Pro Max 192.168.40.1   (login → PUT wlanconf → GET verifiera)
   └─ HTTP :80 ◀── skylt 1, skylt 2         (sidan hämtar /api/status var 30:e sekund)
 ```
@@ -18,30 +22,37 @@ ESP32-C3 (192.168.40.6, VidebergKraft_IOT, WPA3)
 ## Kom igång (utan att installera något)
 
 ### 1. Flasha från webbläsaren
-1. Anslut ESP32-C3 med en USB-kabel som klarar data.
+1. Anslut kortet med en USB-kabel som klarar data.
 2. Öppna **https://espressif.github.io/esptool-js/** i Chrome eller Edge.
-3. Klicka på **Connect** och välj porten (ofta "USB JTAG/serial debug unit").
+3. Klicka på **Connect** och välj porten.
    Hittas inte kortet: håll in **BOOT**, tryck kort på **RESET** och släpp BOOT.
-4. Ange adressen `0x0` och välj filen `release/guestwifi-esp32c3-full.bin`.
+4. Ange adressen `0x0` och välj filen `release/guestwifi-esp32c5-full.bin`.
 5. Klicka på **Program** och vänta tills det är klart. Tryck sedan på **RESET** på kortet.
 
 ### 2. Första inställningen
-1. OLED:en visar namnet på ett setup-nät (`GW-Setup-XXXX`), ett lösenord och `192.168.4.1`.
-2. Anslut telefonen eller datorn till det nätet och öppna **http://192.168.4.1/admin**.
-3. Fyll i följande och klicka på **Spara**:
-   - lösenordet till `VidebergKraft_IOT`
-   - UniFi-användare och UniFi-lösenord
-   - ett admin-lösenord
-4. ESP:n startar om och ansluter till IOT-nätet.
-5. Gå till **http://192.168.40.6/admin**, logga in och gör följande:
-   - klicka på **Hämta fingeravtryck från UDM** och jämför gärna värdet med certifikatet i UniFi OS
+RGB-lysdioden visar status:
+
+| Färg | Betydelse |
+|---|---|
+| Blå | Ansluter |
+| Grön | Ansluten |
+| Lila | Setup-läge |
+| Gul | Roterar |
+| Röd | Fel |
+
+1. Lysdioden lyser lila. Öppna **Console** i esptool-js (115200 baud). Där skrivs setup-nätets namn (`GW-Setup-XXXX`) och lösenord ut var 15:e sekund.
+2. Anslut till setup-nätet (5 GHz) och öppna **http://192.168.4.1/admin**.
+3. Fyll i WiFi-namn och WiFi-lösenord, fast IP (tomt = DHCP) och ett admin-lösenord. Fyll i UniFi-uppgifterna nu eller senare. Utan dem körs lokalt testläge.
+4. ESP:n startar om och ansluter. Sidan nås på **http://guestwifi.local/**, eller på IP-adressen som står i loggen och i routerns klientlista.
+5. Logga in på **/admin** och gör följande:
+   - klicka på **Hämta fingeravtryck från UDM**
    - klicka på **Testa UniFi**
    - ladda upp **bakgrundsbilden** (JPEG, max 800 KB)
-   - klicka på **Rotera nu** för att se att hela kedjan fungerar
-6. Peka skyltarna mot **http://192.168.40.6/**.
+   - klicka på **Rotera nu**
+6. Peka skyltarna mot skyltsidan `/`.
 
 ### Uppdatera firmware senare
-Flasha `release/guestwifi-esp32c3-app.bin` på adressen **`0x10000`**. Då behålls sparade inställningar och bakgrundsbilden.
+Flasha `release/guestwifi-esp32c5-app.bin` på adressen **`0x10000`**. Då behålls sparade inställningar och bakgrundsbilden.
 Om du i stället flashar `-full.bin` på `0x0` raderas allt, och du får göra setup igen.
 
 ### UniFi-konto
@@ -56,17 +67,18 @@ Skapa ett separat konto i UniFi OS under *Admins & Users*:
   - Efter 5 felaktiga försök spärras inloggningen i 5 minuter.
   - Sessionen gäller i 15 minuter och skyddas med cookie (`HttpOnly`, `SameSite=Strict`) och CSRF-token.
 - **Seriell-loggen** skriver aldrig ut några hemliga värden.
-- **Setup-nätet** har ett slumpat lösenord som bara visas på OLED:en, så den som vill göra setup måste stå vid enheten.
-  - Når ESP:n inte IOT-nätet på 3 minuter startar setup-nätet igen, men då krävs admin-inloggning.
-- **Fabriksåterställning:** håll BOOT intryckt i 10 sekunder, eller använd knappen på adminsidan.
+- **Setup-nätet** har ett slumpat lösenord som bara skrivs i seriell-loggen (och på OLED:en på C3-kortet), så den som vill göra setup behöver fysisk åtkomst till enheten.
+  - Når ESP:n inte sitt WiFi på 3 minuter startar setup-nätet igen, men då krävs admin-inloggning.
+- **Innan ett admin-lösenord är valt** är /admin öppen. Välj ett direkt vid första besöket.
+- **Fabriksåterställning:** håll BOOT intryckt i 10 sekunder (GPIO28 på C5, GPIO9 på C3), eller använd knappen på adminsidan.
 - **Begränsningar:**
   - Adminsidan går över vanlig HTTP. Gör inställningar via setup-nätet (krypterat med WPA2) eller från IOT-nätet (WPA3), inte över ett okrypterat trådat nät.
   - Värdena ligger i ESP:ns NVS. Den som har fysisk åtkomst och USB-kabel kan läsa ut flashminnet. Skydd mot det kräver flash-kryptering (eFuse, oåterkalleligt) och ingår inte.
 
 ## Status via API
 ```sh
-curl http://192.168.40.6/api/health     # status, senaste fel, heap, RSSI (inga hemligheter)
-curl http://192.168.40.6/api/status     # det skyltarna ser
+curl http://guestwifi.local/api/health   # läge, senaste fel, kanal, RSSI (inga hemligheter)
+curl http://guestwifi.local/api/status   # det skyltarna ser
 ```
 
 ## Beteende
@@ -84,7 +96,8 @@ Lösenordet sparas i NVS. Efter en omstart visas det gråat tills UDM:en har bek
 
 ## Bygga själv
 `include/config.h` innehåller SSID:er, IP-adresser, tid för rotation, tidszon och OLED-pinnar.
-Med PlatformIO installerat bygger `tools/make_release.sh` om filerna i `release/`.
+Med PlatformIO installerat bygger `tools/make_release.sh [esp32c5|esp32c3]` om filerna i `release/`.
+För ett testbygge med förifyllt WiFi skapar du `include/secrets.h` (gitignorerad) med `CFG_DEFAULT_WIFI_SSID`, `CFG_DEFAULT_WIFI_PASS` och `CFG_DEFAULT_STATIC_IP`.
 
 ## Tester och simulering (på datorn)
 ```sh

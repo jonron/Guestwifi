@@ -8,6 +8,9 @@ namespace guest {
 // Returnerar "" om värdet är giltigt, annars ett felmeddelande.
 std::string validateWifiPassword(const std::string& pw);    // WPA: 8–63 tecken
 std::string validateAdminPassword(const std::string& pw);   // minst 10 tecken
+std::string validateSsid(const std::string& ssid);          // 1–32 tecken
+// "" = DHCP (giltigt). Annars en IPv4-adress a.b.c.d.
+std::string validateIpv4(const std::string& ip);
 
 // Normaliserar ett SHA-256-fingeravtryck till "AA:BB:...". Accepterar kolon,
 // mellanslag, gemener och prefixet "sha256 Fingerprint=". Tom sträng = ogiltigt.
@@ -53,7 +56,10 @@ struct AdminView {
   std::string fingerprint;  // inte hemligt – visas så att det kan jämföras
   bool hasBackground = false;
 
-  std::string wifiSsid;
+  std::string wifiSsid;     // inte hemligt – redigerbart
+  std::string staticIp;     // tomt = DHCP
+  std::string band;         // t.ex. "5 GHz"
+  bool localMode = false;   // inget UniFi-konto: lösenordet roteras bara lokalt
   bool wifiConnected = false;
   std::string ip;
   int rssi = 0;

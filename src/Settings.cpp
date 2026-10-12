@@ -7,6 +7,8 @@
 #include <mbedtls/pkcs5.h>
 
 #include <cstdlib>
+
+#include "config.h"
 #include <vector>
 
 static constexpr const char* kNamespace = "secrets";
@@ -14,8 +16,10 @@ static constexpr unsigned kIterations = 10000;
 
 void settingsLoad(Settings& s) {
   Preferences p;
-  p.begin(kNamespace, true);
-  s.wifiPassword = p.getString("wifi", "").c_str();
+  p.begin(kNamespace, true);  // finns inte namnrymden än ger get* standardvärdena
+  s.wifiSsid = p.getString("ssid", CFG_DEFAULT_WIFI_SSID).c_str();
+  s.wifiPassword = p.getString("wifi", CFG_DEFAULT_WIFI_PASS).c_str();
+  s.staticIp = p.isKey("ip") ? p.getString("ip", "").c_str() : CFG_DEFAULT_STATIC_IP;
   s.udmUser = p.getString("udmu", "").c_str();
   s.udmPassword = p.getString("udmp", "").c_str();
   s.fingerprint = p.getString("fp", "").c_str();
@@ -26,7 +30,9 @@ void settingsLoad(Settings& s) {
 void settingsSave(const Settings& s) {
   Preferences p;
   p.begin(kNamespace, false);
+  p.putString("ssid", s.wifiSsid.c_str());
   p.putString("wifi", s.wifiPassword.c_str());
+  p.putString("ip", s.staticIp.c_str());
   p.putString("udmu", s.udmUser.c_str());
   p.putString("udmp", s.udmPassword.c_str());
   p.putString("fp", s.fingerprint.c_str());

@@ -5,6 +5,9 @@
 
 #include <utility>
 
+#include "Log.h"
+#include "config.h"
+
 static constexpr uint32_t kSessionTimeoutMs = 15 * 60 * 1000;
 static constexpr size_t kMaxBackgroundBytes = 800 * 1024;
 static constexpr const char* kCookieName = "gw_s";
@@ -103,6 +106,9 @@ static void handlePage() {
   sFlash.clear();
 
   const Settings& s = *sCtx.settings;
+  v.wifiSsid = s.wifiSsid;
+  v.staticIp = s.staticIp;
+  v.localMode = !s.unifiConfigured();
   v.hasWifiPassword = !s.wifiPassword.empty();
   v.hasUdmUser = !s.udmUser.empty();
   v.hasUdmPassword = !s.udmPassword.empty();
@@ -129,7 +135,7 @@ static void handleLogin() {
   }
   if (!verifyAdminPassword(sServer->arg("password").c_str(), sCtx.settings->adminHash)) {
     sThrottle.fail(now);
-    Serial.println("[admin] misslyckad inloggning");
+    logf("[admin] misslyckad inloggning\n");
     flash("Fel lösenord.", true);
     return redirectToAdmin();
   }
@@ -139,7 +145,7 @@ static void handleLogin() {
   sSessionLast = millis();
   sServer->sendHeader("Set-Cookie", String(kCookieName) + "=" + sSession.c_str() +
                                         "; Path=/admin; HttpOnly; SameSite=Strict");
-  Serial.println("[admin] inloggad");
+  logf("[admin] inloggad\n");
   redirectToAdmin();
 }
 
@@ -156,6 +162,8 @@ static void handleSecrets() {
   Settings next = *sCtx.settings;
   const bool firstSetup = setupMode();
 
+  const std::string ssid = sServer->arg("wifi_ssid").c_str();
+  const std::string ip = sServer->arg("static_ip").c_str();
   const std::string wifi = sServer->arg("wifi_pass").c_str();
   const std::string udmUser = sServer->arg("udm_user").c_str();
   const std::string udmPass = sServer->arg("udm_pass").c_str();
@@ -163,8 +171,12 @@ static void handleSecrets() {
   const std::string admin = sServer->arg("admin_pass").c_str();
   const std::string admin2 = sServer->arg("admin_pass2").c_str();
 
-  std::string err;
-  if (!wifi.empty()) {
+  std::string err = guest::validateSsid(ssid);
+  if (err.empty()) err = guest::validateIpv4(ip);
+  next.wifiSsid = ssid;
+  next.staticIp = ip;
+  if (!err.empty()) {
+  } else if (!wifi.empty()) {
     err = guest::validateWifiPassword(wifi);
     next.wifiPassword = wifi;
   } else if (next.wifiPassword.empty()) {
@@ -186,18 +198,19 @@ static void handleSecrets() {
   if (!udmUser.empty()) next.udmUser = udmUser;
   if (!udmPass.empty()) next.udmPassword = udmPass;
 
-  const bool needsRestart = firstSetup || next.wifiPassword != sCtx.settings->wifiPassword ||
+  const bool needsRestart = firstSetup || next.wifiSsid != sCtx.settings->wifiSsid ||
+                            next.staticIp != sCtx.settings->staticIp ||
+                            next.wifiPassword != sCtx.settings->wifiPassword ||
                             next.udmUser != sCtx.settings->udmUser ||
                             next.udmPassword != sCtx.settings->udmPassword ||
                             next.fingerprint != sCtx.settings->fingerprint;
   *sCtx.settings = next;
   settingsSave(next);
-  Serial.println("[admin] inställningar sparade");  // aldrig värdena
+  logf("[admin] inställningar sparade\n");  // aldrig värdena
 
   if (needsRestart) {
-    flash(firstSetup ? "Sparat. ESP:n startar om och ansluter till IOT-nätet – öppna sedan "
-                       "http://192.168.40.6/admin"
-                     : "Sparat. ESP:n startar om…");
+    flash("Sparat. ESP:n startar om och ansluter till " + next.wifiSsid + " – öppna sedan http://" +
+          (next.staticIp.empty() ? std::string(CFG_HOSTNAME) + ".local" : next.staticIp) + "/admin");
     sCtx.scheduleRestart(1500);
   } else {
     flash("Sparat.");
@@ -247,7 +260,7 @@ static void handleReset() {
   if (!guard()) return;
   settingsErase();
   *sCtx.settings = Settings();
-  Serial.println("[admin] fabriksåterställd via adminsidan");
+  logf("[admin] fabriksåterställd via adminsidan\n");
   flash("Alla sparade lösenord är raderade. ESP:n startar om i setup-läge.");
   sCtx.scheduleRestart(1500);
   redirectToAdmin();

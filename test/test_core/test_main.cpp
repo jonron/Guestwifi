@@ -396,6 +396,34 @@ static void test_admin_validation() {
   TEST_ASSERT_TRUE(validateAdminPassword("kort").size() > 0);
 }
 
+static void test_ssid_and_ip_validation() {
+  TEST_ASSERT_EQUAL_STRING("", validateSsid("Tele2_41b74e").c_str());
+  TEST_ASSERT_TRUE(validateSsid("").size() > 0);
+  TEST_ASSERT_TRUE(validateSsid(std::string(33, 'a')).size() > 0);
+  TEST_ASSERT_EQUAL_STRING("", validateIpv4("").c_str());  // DHCP
+  TEST_ASSERT_EQUAL_STRING("", validateIpv4("192.168.40.6").c_str());
+  TEST_ASSERT_TRUE(validateIpv4("192.168.40").size() > 0);
+  TEST_ASSERT_TRUE(validateIpv4("192.168.40.256").size() > 0);
+  TEST_ASSERT_TRUE(validateIpv4("192.168..6").size() > 0);
+  TEST_ASSERT_TRUE(validateIpv4("1.2.3.4.5").size() > 0);
+  TEST_ASSERT_TRUE(validateIpv4("a.b.c.d").size() > 0);
+}
+
+static void test_local_mode_rotation() {
+  std::mt19937 mt(3);
+  PasswordGenerator gen([&] { return static_cast<uint32_t>(mt()); });
+  LocalWlanApi local("Start-Pass-22");
+  Rotator rot(local, gen, "VidebergKraft_Guest", [](uint32_t) {}, 3, 0);
+  std::string cur, err;
+  TEST_ASSERT_TRUE(rot.sync(cur, err));
+  TEST_ASSERT_EQUAL_STRING("Start-Pass-22", cur.c_str());
+  RotateResult r = rot.rotate(cur);
+  TEST_ASSERT_TRUE(r.ok);
+  TEST_ASSERT_TRUE(r.password != "Start-Pass-22");
+  TEST_ASSERT_TRUE(rot.sync(cur, err));
+  TEST_ASSERT_EQUAL_STRING(r.password.c_str(), cur.c_str());
+}
+
 static void test_fingerprint_normalization() {
   const std::string want =
       "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89";
@@ -444,6 +472,7 @@ static AdminView fullView() {
   v.csrf = "tok123";
   v.hasWifiPassword = v.hasUdmUser = v.hasUdmPassword = v.hasAdminPassword = true;
   v.wifiSsid = "VidebergKraft_IOT";
+  v.staticIp = "192.168.40.6";
   v.guestSsid = "VidebergKraft_Guest";
   v.guestPassword = "Sunny-Tiger-47";
   v.fingerprint = "AB:CD";
@@ -479,6 +508,9 @@ static void test_admin_page_never_prefills_secrets() {
   TEST_ASSERT_EQUAL(5, fields);  // wifi, udm-user, udm-pass, admin, admin2
   TEST_ASSERT_TRUE(page.find("name=\"csrf\" value=\"tok123\"") != std::string::npos);
   TEST_ASSERT_TRUE(page.find("✓ satt") != std::string::npos);
+  // Icke-hemliga fält förifylls.
+  TEST_ASSERT_TRUE(page.find("name=\"wifi_ssid\" spellcheck=\"false\" required maxlength=\"32\" value=\"VidebergKraft_IOT\"") != std::string::npos);
+  TEST_ASSERT_TRUE(page.find("value=\"192.168.40.6\"") != std::string::npos);
 }
 
 static void test_admin_page_escapes_and_setup_mode() {
@@ -520,6 +552,8 @@ int main() {
   RUN_TEST(test_schedule);
   RUN_TEST(test_web_content);
   RUN_TEST(test_admin_validation);
+  RUN_TEST(test_ssid_and_ip_validation);
+  RUN_TEST(test_local_mode_rotation);
   RUN_TEST(test_fingerprint_normalization);
   RUN_TEST(test_constant_time_equals);
   RUN_TEST(test_login_throttle);
