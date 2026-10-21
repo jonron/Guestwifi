@@ -15,7 +15,7 @@ substitutions:
   # Adressen till ESP32-C5:an. Använd helst en fast IP (DHCP-reservation i routern).
   status_url: "http://192.168.40.6/api/display"
   # "false" om logotypen redan finns i bakgrundsbilden.
-  draw_logo: "true"
+  draw_logo: "false"
 
 esphome:
   name: ${name}

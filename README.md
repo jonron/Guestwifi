@@ -84,7 +84,7 @@ curl http://guestwifi.local/api/status   # det skyltarna ser
 
 ## E-pappersskylt: reTerminal E1002
 Konfigurationen finns i `display/reterminal-e1002/` och körs med ESPHome 2025.11 eller senare. Den har kompilerats med ESPHome 2026.6.
-`preview.png` visar layouten med batterivarningen och en testbakgrund.
+`guestwifi-bg.png` är Videberg Kraft-bilden (svartvit dithering, logotypen ingår, därför `draw_logo: "false"`). `preview.png` visar resultatet.
 Skylten visar följande:
 - logotypen
 - "Welcome / Join our guest wifi"

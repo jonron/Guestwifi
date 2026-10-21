@@ -7,6 +7,7 @@ men filen sparas med rena färger så att ESPHome översätter dem exakt.
 
     python3 tools/epaper_dither.py foto.jpg display/reterminal-e1002/guestwifi-bg.png
     python3 tools/epaper_dither.py foto.jpg ut.png --lighten 0.35   # ljusare bakgrund
+    python3 tools/epaper_dither.py foto.jpg ut.png --grayscale --crop-x 1   # svartvit, behåll högerkanten
 
 --lighten blandar in vitt så att texten ovanpå syns tydligare (0 = oförändrat).
 Kräver Pillow (pip install pillow).
@@ -33,9 +34,12 @@ def main():
     ap.add_argument("--lighten", type=float, default=0.0, help="0–1, blanda in vitt")
     ap.add_argument("--saturation", type=float, default=1.2, help="färgmättnad före dithering")
     ap.add_argument("--grayscale", action="store_true", help="bara svart/vitt-dithering")
+    ap.add_argument("--crop-x", type=float, default=0.5,
+                    help="vad som behålls vid beskärning: 0 = vänsterkant, 0.5 = mitten, 1 = högerkant")
     a = ap.parse_args()
 
-    img = ImageOps.fit(Image.open(a.src).convert("RGB"), (800, 480), Image.LANCZOS)
+    img = ImageOps.fit(Image.open(a.src).convert("RGB"), (800, 480), Image.LANCZOS,
+                       centering=(a.crop_x, 0.5))
     if a.lighten > 0:
         img = Image.blend(img, Image.new("RGB", img.size, (255, 255, 255)), a.lighten)
     img = ImageEnhance.Color(img).enhance(0 if a.grayscale else a.saturation)
