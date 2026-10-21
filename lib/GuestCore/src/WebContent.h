@@ -18,4 +18,10 @@ std::string renderPage(const std::string& tmpl, const PublicStatus& st);
 
 std::string statusJson(const PublicStatus& st);
 
+// För e-pappersskärmen (reTerminal E1002): samma data plus när den bör vakna nästa gång.
+//   next_rotation_s  sekunder till nattens rotation (-1 = okänt, t.ex. tid ej synkad)
+//   refresh_s        hur länge skärmen bör sova: högst en timme, annars strax efter rotationen
+std::string displayJson(const PublicStatus& st, long nextRotationSeconds);
+long displayRefreshSeconds(long nextRotationSeconds);
+
 }  // namespace guest

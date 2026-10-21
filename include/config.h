@@ -3,7 +3,7 @@
 // adminsidan http://<esp>/admin och sparas i ESP:ns NVS – de finns aldrig i koden.
 // För testbyggen kan include/secrets.h (gitignorerad) sätta CFG_DEFAULT_* nedan.
 
-#define CFG_FIRMWARE_VERSION "1.2.0"
+#define CFG_FIRMWARE_VERSION "1.3.0"
 
 #if __has_include("secrets.h")
 #include "secrets.h"

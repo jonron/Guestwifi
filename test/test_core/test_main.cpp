@@ -3,6 +3,7 @@
 #include <GuestCore.h>
 #include <unity.h>
 
+#include <algorithm>
 #include <cctype>
 #include <deque>
 #include <random>
@@ -26,10 +27,7 @@ static void test_wordlist_is_clean() {
 }
 
 // ---------------------------------------------------------------- lösenord
-static bool isWord(const std::string& capitalized) {
-  std::string w = capitalized;
-  if (w.empty() || !std::isupper(static_cast<unsigned char>(w[0]))) return false;
-  w[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(w[0])));
+static bool isWord(const std::string& w) {
   for (size_t i = 0; i < kWordCount; ++i)
     if (w == kWords[i]) return true;
   return false;
@@ -39,9 +37,9 @@ static void test_password_format() {
   std::mt19937 mt(42);
   PasswordGenerator gen([&] { return static_cast<uint32_t>(mt()); });
   for (int i = 0; i < 2000; ++i) {
-    std::string pw = gen.generate();
-    size_t d1 = pw.find('-');
-    size_t d2 = pw.find('-', d1 + 1);
+    std::string pw = gen.generate();  // t.ex. "stocking_banana_43"
+    size_t d1 = pw.find('_');
+    size_t d2 = pw.find('_', d1 + 1);
     TEST_ASSERT_TRUE(d1 != std::string::npos && d2 != std::string::npos);
     std::string a = pw.substr(0, d1), b = pw.substr(d1 + 1, d2 - d1 - 1), n = pw.substr(d2 + 1);
     TEST_ASSERT_TRUE_MESSAGE(isWord(a), pw.c_str());
@@ -51,6 +49,14 @@ static void test_password_format() {
     for (char c : n) TEST_ASSERT_TRUE_MESSAGE(c >= '2' && c <= '9', pw.c_str());
     TEST_ASSERT_TRUE(pw.size() >= 8 && pw.size() <= 63);  // WPA-gränser
   }
+}
+
+static void test_password_style_capitalized_dash() {
+  std::mt19937 mt(5);
+  PasswordGenerator gen([&] { return static_cast<uint32_t>(mt()); }, PasswordStyle{'-', true});
+  std::string pw = gen.generate();
+  TEST_ASSERT_TRUE(std::isupper(static_cast<unsigned char>(pw[0])));
+  TEST_ASSERT_EQUAL(2, std::count(pw.begin(), pw.end(), '-'));
 }
 
 static void test_password_never_repeats_previous() {
@@ -357,6 +363,31 @@ static LocalTime at(int ymd, int h, int m) {
   return t;
 }
 
+static void test_seconds_until_rotation_and_display_refresh() {
+  Schedule s(3, 0, 7);
+  LocalTime t = at(20261021, 2, 0);
+  t.second = 0;
+  TEST_ASSERT_EQUAL(3600, s.secondsUntilNextRotation(t, 20261020));        // 02:00 -> 03:00
+  t = at(20261021, 3, 10);
+  TEST_ASSERT_EQUAL(86400 - 600, s.secondsUntilNextRotation(t, 20261021)); // redan roterat -> i morgon
+  t = at(20261021, 4, 0);
+  TEST_ASSERT_EQUAL(60, s.secondsUntilNextRotation(t, 20261019));          // ta-igen-läge
+  t = at(20261021, 1, 0);
+  TEST_ASSERT_EQUAL(86400 + 7200, s.secondsUntilNextRotation(t, 20261021)); // manuellt roterat i natt
+
+  TEST_ASSERT_EQUAL(3600, displayRefreshSeconds(-1));
+  TEST_ASSERT_EQUAL(3600, displayRefreshSeconds(20000));
+  TEST_ASSERT_EQUAL(1380, displayRefreshSeconds(1200));  // vakna 3 min efter rotationen
+  TEST_ASSERT_EQUAL(240, displayRefreshSeconds(60));
+
+  PublicStatus st{"VidebergKraft_Guest", "stocking_banana_43", true, "", 9};
+  JsonDocument d;
+  deserializeJson(d, displayJson(st, 1200));
+  TEST_ASSERT_EQUAL_STRING("stocking_banana_43", d["password"] | "");
+  TEST_ASSERT_EQUAL(1380, d["refresh_s"].as<long>());
+  TEST_ASSERT_EQUAL(9, d["version"].as<long>());
+}
+
 static void test_schedule() {
   Schedule s(3, 0, 7);
   TEST_ASSERT_FALSE(s.isDue(at(20261006, 3, 0), 0));          // aldrig roterat -> adoptera
@@ -532,6 +563,7 @@ int main() {
   UNITY_BEGIN();
   RUN_TEST(test_wordlist_is_clean);
   RUN_TEST(test_password_format);
+  RUN_TEST(test_password_style_capitalized_dash);
   RUN_TEST(test_password_never_repeats_previous);
   RUN_TEST(test_uniform_rejects_biased_values);
   RUN_TEST(test_password_distribution_roughly_uniform);
@@ -550,6 +582,7 @@ int main() {
   RUN_TEST(test_rotate_never_applied);
   RUN_TEST(test_sync);
   RUN_TEST(test_schedule);
+  RUN_TEST(test_seconds_until_rotation_and_display_refresh);
   RUN_TEST(test_web_content);
   RUN_TEST(test_admin_validation);
   RUN_TEST(test_ssid_and_ip_validation);

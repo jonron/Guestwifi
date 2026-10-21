@@ -1,6 +1,6 @@
 // Guest WiFi password rotator (ESP32-C5 / ESP32-C3).
 //
-// Varje natt 03:00: generera "Ord-Ord-NN" -> skriv till UDM Pro Max ->
+// Varje natt 03:00: generera "ord_ord_NN" -> skriv till UDM Pro Max ->
 // läs tillbaka och verifiera -> först då visas lösenordet på skyltsidan.
 // Utan UniFi-konto körs ett lokalt testläge där lösenordet bara byts i ESP:n.
 //
@@ -78,6 +78,7 @@ static guest::LocalTime localNow() {
   lt.day = tm.tm_mday;
   lt.hour = tm.tm_hour;
   lt.minute = tm.tm_min;
+  lt.second = tm.tm_sec;
   return lt;
 }
 
@@ -371,6 +372,17 @@ static void setupWeb() {
     {
       std::lock_guard<std::mutex> lock(gMutex);
       json = guest::statusJson(gStatus);
+    }
+    sendNoStore(200, "application/json", json);
+  });
+
+  // För e-pappersskärmen (reTerminal E1002): lösenord + när den ska vakna nästa gång.
+  gServer.on("/api/display", HTTP_GET, [] {
+    const long next = timeValid() ? gSchedule.secondsUntilNextRotation(localNow(), gLastRotatedYmd) : -1;
+    std::string json;
+    {
+      std::lock_guard<std::mutex> lock(gMutex);
+      json = guest::displayJson(gStatus, next);
     }
     sendNoStore(200, "application/json", json);
   });

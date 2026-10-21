@@ -7,7 +7,8 @@
 
 namespace guest {
 
-PasswordGenerator::PasswordGenerator(RandomSource rng) : rng_(std::move(rng)) {}
+PasswordGenerator::PasswordGenerator(RandomSource rng, PasswordStyle style)
+    : rng_(std::move(rng)), style_(style) {}
 
 uint32_t PasswordGenerator::uniform(uint32_t n) {
   if (n <= 1) return 0;
@@ -20,9 +21,9 @@ uint32_t PasswordGenerator::uniform(uint32_t n) {
   return r % n;
 }
 
-static std::string capitalized(const char* word) {
+static std::string styled(const char* word, bool capitalize) {
   std::string s(word);
-  if (!s.empty()) s[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(s[0])));
+  if (capitalize && !s.empty()) s[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(s[0])));
   return s;
 }
 
@@ -34,7 +35,8 @@ std::string PasswordGenerator::generate(const std::string& previous) {
       b = uniform(kWordCount);
     } while (b == a);
 
-    std::string pw = capitalized(kWords[a]) + "-" + capitalized(kWords[b]) + "-";
+    const char sep = style_.separator;
+    std::string pw = styled(kWords[a], style_.capitalize) + sep + styled(kWords[b], style_.capitalize) + sep;
     pw += static_cast<char>('2' + uniform(8));
     pw += static_cast<char>('2' + uniform(8));
     if (pw != previous) return pw;

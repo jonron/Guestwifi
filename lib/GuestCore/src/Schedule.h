@@ -4,7 +4,7 @@
 namespace guest {
 
 struct LocalTime {
-  int year = 0, month = 0, day = 0, hour = 0, minute = 0;
+  int year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0;
   int ymd() const { return year * 10000 + month * 100 + day; }
 };
 
@@ -21,6 +21,16 @@ class Schedule {
     if (lastRotatedYmd == 0 || now.ymd() <= lastRotatedYmd) return false;
     const int nowMin = now.hour * 60 + now.minute;
     return nowMin >= hour_ * 60 + minute_ && now.hour < catchUpUntilHour_;
+  }
+
+  // Sekunder tills nästa schemalagda rotation (ungefär, sommartidsbyten ignoreras).
+  // Väntar en rotation redan på att köras returneras 60.
+  long secondsUntilNextRotation(const LocalTime& now, int lastRotatedYmd) const {
+    if (isDue(now, lastRotatedYmd)) return 60;
+    const long nowS = now.hour * 3600L + now.minute * 60L + now.second;
+    const long rotS = hour_ * 3600L + minute_ * 60L;
+    if (nowS < rotS && now.ymd() > lastRotatedYmd) return rotS - nowS;
+    return 86400L - nowS + rotS;
   }
 
   // Väntetid före nytt försök efter `failures` misslyckanden i rad.

@@ -2,7 +2,7 @@
 
 ESP32-C5 (Waveshare ESP32-C5-WROOM-1, 16 MB flash) som varje natt kl. 03:00:
 
-1. skapar ett lättläst lösenord, två engelska ord och två siffror, t.ex. `Honey-Eager-27`
+1. skapar ett lättläst lösenord, två engelska ord och två siffror, t.ex. `stocking_banana_43`
 2. skriver det till gäst-WLAN:et i **UDM Pro Max** via UniFi:s lokala API
 3. läser tillbaka från UDM:en och **verifierar** att lösenordet gäller
 4. först därefter visas lösenordet på skyltsidan
@@ -15,8 +15,9 @@ Det äldre ESP32-C3-kortet med 0,42" OLED stöds fortfarande som `env:esp32c3`, 
 
 ```
 ESP32-C5 (5 GHz)
-  ├─ HTTPS ──▶ UDM Pro Max 192.168.40.1   (login → PUT wlanconf → GET verifiera)
-  └─ HTTP :80 ◀── skylt 1, skylt 2         (sidan hämtar /api/status var 30:e sekund)
+  ├─ HTTPS ──▶ UDM Pro Max 192.168.40.1      (login → PUT wlanconf → GET verifiera)
+  ├─ HTTP :80 ◀── webbskyltar                 (sidan hämtar /api/status var 30:e sekund)
+  └─ HTTP :80 ◀── reTerminal E1002 (ePaper)   (hämtar /api/display, sover däremellan)
 ```
 
 ## Kom igång (utan att installera något)
@@ -81,6 +82,30 @@ curl http://guestwifi.local/api/health   # läge, senaste fel, kanal, RSSI (inga
 curl http://guestwifi.local/api/status   # det skyltarna ser
 ```
 
+## E-pappersskylt: reTerminal E1002
+Konfigurationen finns i `display/reterminal-e1002/` och körs med ESPHome 2025.11 eller senare.
+Skylten visar följande:
+- logotypen
+- "Welcome / Join our guest wifi"
+- nätnamnet och dagens lösenord
+- "Please charge me soon" i rött när batteriet är under 10 %. Varningen försvinner först över 15 %, så att den inte slår av och på.
+
+Skylten sover mellan kontrollerna:
+- Den vaknar minst en gång i timmen och alltid ett par minuter efter nattens rotation. ESP32-C5 talar om när i `refresh_s`.
+- Den ritar bara om när lösenordet eller batterivarningen ändras. E-paper behåller bilden utan ström.
+- Höger vit knapp väcker skylten och tvingar fram en omritning.
+- Om ESP32-C5 inte svarar behåller skylten sin bild.
+
+**Kom igång:**
+1. Kopiera `secrets.yaml.example` till `secrets.yaml` och fyll i ett **2,4 GHz**-nät. E1002 saknar 5 GHz.
+2. Ställ in `status_url` i yamlfilen på C5-kortets adress. Ge C5 en fast IP eller en DHCP-reservation.
+3. **Bakgrund (valfri):** `python3 tools/epaper_dither.py foto.jpg display/reterminal-e1002/guestwifi-bg.png --lighten 0.3`
+   gör om ett foto till skärmens sex färger. Den medföljande bilden är helt vit.
+   Har bakgrunden redan logotypen, sätt `draw_logo: "false"`.
+4. Flasha med ESPHome via USB, till exempel `esphome run guestwifi-display.yaml` eller ESPHome Device Builder.
+
+`/api/display` på ESP32-C5 returnerar `{"ssid","password","verified","version","updated","next_rotation_s","refresh_s"}`.
+
 ## Beteende
 
 | Situation | Vad händer |
@@ -129,6 +154,7 @@ src/web/         skyltsidan (bäddas in i firmware)
 data/            LittleFS: bg.jpg + typsnittet IBM Plex Mono (OFL)
 sim/             mock-UDM och simulator
 release/         färdiga .bin-filer för flashning från webbläsaren
-tools/           make_release.sh
+display/         ESPHome-konfiguration för reTerminal E1002 (e-pappersskylt)
+tools/           make_release.sh, epaper_dither.py
 test/            enhetstester
 ```

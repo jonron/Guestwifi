@@ -4,3 +4,5 @@ include/secrets.h
 sim/out/
 __pycache__/
 test-build/
+display/**/secrets.yaml
+display/**/.esphome/

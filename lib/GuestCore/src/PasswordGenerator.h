@@ -8,11 +8,17 @@ namespace guest {
 // Källa till 32-bitars slumptal. På ESP32: esp_random() (hårdvaru-RNG).
 using RandomSource = std::function<uint32_t()>;
 
-// Skapar lösenord av typen "Sunny-Tiger-47": två olika ord ur ordlistan och
-// två siffror 2–9 (0/1 utesluts eftersom de förväxlas med O/l/I).
+// Hur lösenordet skrivs. Standard: "stocking_banana_43".
+struct PasswordStyle {
+  char separator = '_';
+  bool capitalize = false;  // true ger "Stocking_Banana_43"
+};
+
+// Skapar lösenord av två olika ord ur ordlistan och två siffror 2–9
+// (0/1 utesluts eftersom de förväxlas med O/l/I).
 class PasswordGenerator {
  public:
-  explicit PasswordGenerator(RandomSource rng);
+  explicit PasswordGenerator(RandomSource rng, PasswordStyle style = PasswordStyle());
 
   // Ger aldrig samma lösenord som `previous`.
   std::string generate(const std::string& previous = "");
@@ -22,6 +28,7 @@ class PasswordGenerator {
 
  private:
   RandomSource rng_;
+  PasswordStyle style_;
 };
 
 }  // namespace guest
