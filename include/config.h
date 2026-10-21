@@ -3,7 +3,7 @@
 // adminsidan http://<esp>/admin och sparas i ESP:ns NVS – de finns aldrig i koden.
 // För testbyggen kan include/secrets.h (gitignorerad) sätta CFG_DEFAULT_* nedan.
 
-#define CFG_FIRMWARE_VERSION "1.3.0"
+#define CFG_FIRMWARE_VERSION "1.4.0"
 
 #if __has_include("secrets.h")
 #include "secrets.h"
@@ -38,6 +38,8 @@
 #define CFG_ROTATE_MINUTE    0
 #define CFG_CATCHUP_UNTIL    7      // missad rotation tas igen fram till 07:00, annars nästa natt
 #define CFG_RESYNC_MINUTES   15     // läs av UDM regelbundet (fångar manuella ändringar)
+#define CFG_DISPLAY_REFRESH_HOUR    4   // e-pappersskylten vaknar och uppdateras 04:00
+#define CFG_DISPLAY_REFRESH_MINUTE  0
 
 // --- Kort ---
 #if CONFIG_IDF_TARGET_ESP32C5

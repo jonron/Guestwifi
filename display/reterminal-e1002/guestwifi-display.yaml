@@ -1,8 +1,9 @@
 # reTerminal E1002 (7,3" Spectra 6 färg-ePaper, ESP32-S3) – skylt för gäst-WiFi.
 #
 # Hämtar dagens lösenord från ESP32-C5:ans /api/display, ritar skylten och sover
-# sedan tills nästa kontroll (högst en timme, och alltid strax efter nattens
-# rotation). Skärmen ritas bara om när lösenordet eller batterivarningen ändras.
+# sedan till nästa morgon kl. 04:00 (ESP32-C5 räknar ut sömntiden från sin NTP-tid,
+# så varje uppvaknande korrigerar för klockdrift). Når den inte C5 försöker den igen
+# om 15 minuter. Skärmen ritas bara om när lösenordet eller batterivarningen ändras.
 # Under 10 % batteri visas "Please charge me soon" längst ned.
 #
 # Höger vit knapp (GPIO4) väcker skärmen och tvingar fram en omritning.
@@ -53,9 +54,9 @@ http_request:
 
 deep_sleep:
   id: deep_sleep_1
-  # Skyddsnät om något hänger sig: sov efter 3 minuter oavsett.
+  # Skyddsnät om något hänger sig: sov efter 3 minuter oavsett, försök igen om 15.
   run_duration: 3min
-  sleep_duration: 60min
+  sleep_duration: 15min
   wakeup_pin: GPIO4            # höger vit knapp
   wakeup_pin_mode: INVERT_WAKEUP
 
@@ -65,9 +66,9 @@ globals:
     type: std::string
   - id: g_password
     type: std::string
-  - id: g_sleep_s
+  - id: g_sleep_s           # ersätts av refresh_s från C5; annars nytt försök om 15 min
     type: int
-    initial_value: "3600"
+    initial_value: "900"
   - id: g_fetched
     type: bool
     initial_value: "false"
@@ -153,7 +154,7 @@ script:
                         json::parse_json(body, [](JsonObject root) -> bool {
                           id(g_ssid) = root["ssid"] | "";
                           id(g_password) = root["password"] | "";
-                          id(g_sleep_s) = root["refresh_s"] | 3600;
+                          id(g_sleep_s) = root["refresh_s"] | 900;
                           id(g_fetched) = !id(g_ssid).empty() && !id(g_password).empty();
                           return true;
                         });

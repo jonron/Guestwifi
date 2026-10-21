@@ -33,6 +33,13 @@ class Schedule {
     return 86400L - nowS + rotS;
   }
 
+  // Sekunder tills nästa gång klockan är hour:minute (i dag eller i morgon).
+  static long secondsUntil(const LocalTime& now, int hour, int minute) {
+    const long nowS = now.hour * 3600L + now.minute * 60L + now.second;
+    const long target = hour * 3600L + minute * 60L;
+    return nowS < target ? target - nowS : 86400L - nowS + target;
+  }
+
   // Väntetid före nytt försök efter `failures` misslyckanden i rad.
   static uint32_t retryDelaySeconds(int failures) {
     static const uint32_t steps[] = {60, 120, 300, 600, 900};

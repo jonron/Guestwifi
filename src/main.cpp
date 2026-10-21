@@ -376,13 +376,18 @@ static void setupWeb() {
     sendNoStore(200, "application/json", json);
   });
 
-  // För e-pappersskärmen (reTerminal E1002): lösenord + när den ska vakna nästa gång.
+  // För e-pappersskärmen (reTerminal E1002): lösenord + när den ska vakna nästa gång
+  // (en gång per dygn, CFG_DISPLAY_REFRESH_HOUR). Utan synkad tid: försök igen om en timme.
   gServer.on("/api/display", HTTP_GET, [] {
-    const long next = timeValid() ? gSchedule.secondsUntilNextRotation(localNow(), gLastRotatedYmd) : -1;
+    const bool tv = timeValid();
+    const long next = tv ? gSchedule.secondsUntilNextRotation(localNow(), gLastRotatedYmd) : -1;
+    const long refresh =
+        tv ? guest::Schedule::secondsUntil(localNow(), CFG_DISPLAY_REFRESH_HOUR, CFG_DISPLAY_REFRESH_MINUTE)
+           : 3600;
     std::string json;
     {
       std::lock_guard<std::mutex> lock(gMutex);
-      json = guest::displayJson(gStatus, next);
+      json = guest::displayJson(gStatus, next, refresh);
     }
     sendNoStore(200, "application/json", json);
   });

@@ -375,16 +375,24 @@ static void test_seconds_until_rotation_and_display_refresh() {
   t = at(20261021, 1, 0);
   TEST_ASSERT_EQUAL(86400 + 7200, s.secondsUntilNextRotation(t, 20261021)); // manuellt roterat i natt
 
-  TEST_ASSERT_EQUAL(3600, displayRefreshSeconds(-1));
-  TEST_ASSERT_EQUAL(3600, displayRefreshSeconds(20000));
-  TEST_ASSERT_EQUAL(1380, displayRefreshSeconds(1200));  // vakna 3 min efter rotationen
-  TEST_ASSERT_EQUAL(240, displayRefreshSeconds(60));
+  // Skärmen vaknar 04:00.
+  t = at(20261021, 3, 0);
+  TEST_ASSERT_EQUAL(3600, Schedule::secondsUntil(t, 4, 0));
+  t = at(20261021, 4, 0);
+  TEST_ASSERT_EQUAL(86400, Schedule::secondsUntil(t, 4, 0));    // precis 04:00 -> i morgon
+  t = at(20261021, 3, 58);
+  t.second = 30;
+  TEST_ASSERT_EQUAL(90, Schedule::secondsUntil(t, 4, 0));       // vaknade lite tidigt
+  t = at(20261021, 4, 7);
+  t.second = 0;
+  TEST_ASSERT_EQUAL(86400 - 420, Schedule::secondsUntil(t, 4, 0));
 
   PublicStatus st{"VidebergKraft_Guest", "stocking_banana_43", true, "", 9};
   JsonDocument d;
-  deserializeJson(d, displayJson(st, 1200));
+  deserializeJson(d, displayJson(st, 1200, 4800));
   TEST_ASSERT_EQUAL_STRING("stocking_banana_43", d["password"] | "");
-  TEST_ASSERT_EQUAL(1380, d["refresh_s"].as<long>());
+  TEST_ASSERT_EQUAL(1200, d["next_rotation_s"].as<long>());
+  TEST_ASSERT_EQUAL(4800, d["refresh_s"].as<long>());
   TEST_ASSERT_EQUAL(9, d["version"].as<long>());
 }
 

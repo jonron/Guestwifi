@@ -92,9 +92,10 @@ Skylten visar följande:
 - "Please charge me soon" i rött när batteriet är under 10 %. Varningen försvinner först över 15 %, så att den inte slår av och på.
 
 Skylten sover mellan kontrollerna:
-- Den vaknar minst en gång i timmen och alltid ett par minuter efter nattens rotation. ESP32-C5 talar om när i `refresh_s`.
+- Den vaknar en gång per dygn, kl. 04:00 (`CFG_DISPLAY_REFRESH_HOUR` i `config.h`), en timme efter nattens rotation. ESP32-C5 räknar ut sömntiden från sin NTP-tid och skickar den i `refresh_s`, så varje uppvaknande rättar till klockdriften. Skylten hamnar inom några minuter från 04:00.
+- Når den inte C5 försöker den igen om 15 minuter.
 - Den ritar bara om när lösenordet eller batterivarningen ändras. E-paper behåller bilden utan ström.
-- Höger vit knapp väcker skylten och tvingar fram en omritning.
+- Höger vit knapp väcker skylten och tvingar fram en omritning, till exempel efter en manuell rotation under dagen.
 - Om ESP32-C5 inte svarar behåller skylten sin bild.
 
 **Kom igång:**
